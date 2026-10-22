@@ -72,6 +72,14 @@ details.measure[open] summary::after{content:"收起"}
 .m-row select{font-family:var(--cn);font-size:14px}
 .m-row .u{font-size:12px;color:var(--muted)}
 .m-row.filled input,.m-row.filled select{border-color:var(--steel);background:#F5F8FD}
+.vehicle{margin-top:14px;background:var(--paper);border:1.5px solid var(--line);border-radius:6px;padding:10px 14px 12px}
+.v-head{font-weight:600}
+.v-head small{font-weight:400;color:var(--muted);font-size:12px;margin-left:8px}
+.v-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin-top:6px}
+.v-grid label{display:block;font-size:12px;color:var(--muted);line-height:1.6}
+.v-grid select,.v-grid input{width:100%;padding:5px 8px;border:1.5px solid var(--line);border-radius:4px;background:#fff;font-size:14px}
+.v-grid .on select,.v-grid .on input{border-color:var(--steel);background:#F5F8FD}
+@media (max-width:600px){.v-grid{grid-template-columns:1fr}}
 
 .samples{margin-top:24px}
 .samples h2{font-size:14px;font-weight:600;margin:0 0 6px;color:var(--muted)}
@@ -88,6 +96,7 @@ details.measure[open] summary::after{content:"收起"}
 
 .rank-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}
 .rank-head h2{font-size:16px;margin:0}
+.vnote{font-size:13px;color:var(--steel);margin:0 0 10px}
 .speed{font-family:var(--num);font-size:14px;color:var(--muted)}
 .speed b{font-size:20px;color:var(--ink);font-weight:600}
 .cand{display:grid;grid-template-columns:1fr auto;column-gap:16px;padding:9px 0}
@@ -152,6 +161,7 @@ section.block > h3{font-size:15px;margin:0 0 8px;padding-bottom:4px;border-botto
 .report ol,.report ul{margin:4px 0;padding-left:1.4em}
 .report li{margin:3px 0}
 .report .safety{background:var(--hv-soft);border-left:4px solid var(--hv);padding:9px 13px;border-radius:0 6px 6px 0}
+.report .r-note{font-size:13px;margin:10px 0 0;padding:8px 12px;background:#F4F7FC;border-left:3px solid var(--steel);border-radius:0 6px 6px 0}
 .report .refs{font-size:13px;color:var(--muted)}
 .report-title{display:flex;align-items:baseline;gap:4px;flex-wrap:wrap;font-size:18px;font-weight:700;margin:4px 0}
 
@@ -262,6 +272,11 @@ dialog::backdrop{background:rgba(21,36,59,.45)}
         <input id="file" type="file" accept="image/*" capture="environment" hidden>
       </div>
       <div class="photo-note" id="photo-note" hidden></div>
+
+      <div class="vehicle" id="vehicle" hidden>
+        <div class="v-head">车辆平台<small>看铭牌或维修手册；不确定就保持默认，按通用阈值判断</small></div>
+        <div class="v-grid" id="v-form"></div>
+      </div>
 
       <details class="measure" id="measure">
         <summary>录入数据流 <span class="m-count" id="m-count"></span></summary>
@@ -408,14 +423,15 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "
 const pct = p => { const v = p * 100; return v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : "<1"; };
 const day = s => (s || "").slice(0, 10);
 
-let PARAMS = [], FAULTS = [], state = {answers: {}}, last = null, busy = false, INFO = {};
+let PARAMS = [], FAULTS = [], VEHICLE = [], HIDDEN = new Set(), state = {answers: {}}, last = null, busy = false, INFO = {};
 
 /* ---------------- 初始化 ---------------- */
 async function boot() {
   try {
-    [PARAMS, FAULTS] = await Promise.all([api("/api/params"), api("/api/faults")]);
+    [PARAMS, FAULTS, VEHICLE] = await Promise.all([api("/api/params"), api("/api/faults"), api("/api/vehicle").catch(() => [])]);
   } catch (e) { setHint("连不上后端，请确认 server.py 正在运行", true); return; }
   buildMeasureForm();
+  buildVehicleForm();
   $("#case-f").innerHTML += FAULTS.map(f => `<option value="${f.id}">${esc(f.name)}</option>`).join("");
   refreshStats();
 }
@@ -453,7 +469,7 @@ function buildMeasureForm() {
 }
 function readMeasure() {
   const m = {};
-  document.querySelectorAll("[data-p]").forEach(el => { if (el.value !== "") m[el.dataset.p] = el.type === "number" ? Number(el.value) : el.value; });
+  document.querySelectorAll("[data-p]").forEach(el => { if (el.value !== "" && !HIDDEN.has(el.dataset.p)) m[el.dataset.p] = el.type === "number" ? Number(el.value) : el.value; });
   return m;
 }
 function markFilled() {
@@ -462,8 +478,39 @@ function markFilled() {
   $("#m-count").textContent = n ? `已填 ${n} 项` : "";
 }
 function setMeasure(m) {
-  document.querySelectorAll("[data-p]").forEach(el => el.value = m[el.dataset.p] ?? "");
+  document.querySelectorAll("[data-p]").forEach(el => el.value = HIDDEN.has(el.dataset.p) ? "" : m[el.dataset.p] ?? "");
   markFilled();
+}
+
+/* ---------------- 车辆平台 ---------------- */
+function buildVehicleForm() {
+  if (!VEHICLE.length) return;
+  $("#v-form").innerHTML = VEHICLE.map(d => `
+    <div><label for="v-${d.id}">${esc(d.name)}</label>
+      <select id="v-${d.id}" data-v="${d.id}">${d.options.map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join("")}</select></div>`).join("")
+    + `<div><label for="v-model">车型（可选）</label><input id="v-model" placeholder="如：秦PLUS EV，确认时记进案例"></div>`;
+  $("#vehicle").hidden = false;
+  $("#v-form").addEventListener("change", e => { if (e.target.dataset.v) vehicleChanged(); });
+  $("#v-model").addEventListener("input", e => e.target.parentNode.classList.toggle("on", !!e.target.value.trim()));
+}
+function readVehicle() {
+  const v = {};
+  document.querySelectorAll("[data-v]").forEach(el => { if (el.value) v[el.dataset.v] = el.value; });
+  return v;
+}
+function vehicleChanged() {
+  HIDDEN = new Set();
+  document.querySelectorAll("[data-v]").forEach(el => {
+    el.parentNode.classList.toggle("on", !!el.value);
+    const o = VEHICLE.find(d => d.id === el.dataset.v).options.find(o => o.value === el.value);
+    (o?.hide_params || []).forEach(p => HIDDEN.add(p));
+  });
+  document.querySelectorAll("[data-p]").forEach(el => {
+    el.closest(".m-row").hidden = HIDDEN.has(el.dataset.p);
+    if (HIDDEN.has(el.dataset.p)) el.value = "";
+  });
+  markFilled();
+  if (last) diagnose();
 }
 document.querySelectorAll("[data-demo]").forEach(b => b.addEventListener("click", () => {
   const d = DEMOS[b.dataset.demo];
@@ -492,7 +539,7 @@ async function diagnose() {
   if (!text && !Object.keys(measurements).length) { setHint("先写一句故障描述，或者录入至少一项数据流", true); $("#q").focus(); return; }
   busy = true; $("#go").disabled = true; setHint("");
   try {
-    last = await api("/api/diagnose", {text, measurements, answers: state.answers});
+    last = await api("/api/diagnose", {text, measurements, answers: state.answers, vehicle: readVehicle()});
     render(last);
     refreshStats();
   } catch (e) { setHint(e.message, true); }
@@ -512,6 +559,7 @@ function render(d) {
                 : "“" + esc(d.text.length > 20 ? d.text.slice(0, 20) + "…" : d.text) + "” 里没有故障相关的内容。可以换个说法，比如“上不了高压”“充不进电”“仪表报绝缘故障”，或者直接回答下面的问题。")
             : "描述比较笼统，各类故障的可能性都差不多。回答下面的问题，或者录入几项数据流，系统才会给出排查方向。"}</p>
       </div>` : `<div class="rank-head"><h2>最可能的故障</h2><div class="speed">用时 <b>${d.ms.toFixed(1)}</b> ms</div></div>`}
+    ${d.vehicle_notes?.length ? `<div class="vnote">已按车辆平台调整：${d.vehicle_notes.map(n => esc(n.label)).join(" · ")}</div>` : ""}
     ${more ? `<div class="cands-dim">` : ""}
     ${c.map(x => `
       <div class="cand ${x.prob < 0.05 ? "minor" : ""}">
@@ -552,6 +600,7 @@ function render(d) {
       <h4>典型现象</h4><p>${esc(r.symptoms)}</p>
       <h4>常见成因</h4><ul>${r.causes.map(x => `<li>${esc(x)}</li>`).join("")}</ul>
       <h4>排查步骤</h4><ol>${r.steps.map(x => `<li>${esc(x)}</li>`).join("")}</ol>
+      ${(r.notes || []).map(n => `<p class="r-note">ⓘ ${esc(n)}</p>`).join("")}
       <h4>安全提示</h4><p class="safety">${esc(r.safety)}</p>
       ${r.refs.length ? `<h4>参考依据</h4><p class="refs">${r.refs.map(esc).join("<br>")}</p>` : ""}
     </section>
@@ -576,7 +625,7 @@ function render(d) {
         <div class="full"><label class="sr" for="cf-fault">最终故障</label>
           <select id="cf-fault">${FAULTS.map(f => `<option value="${f.id}" ${f.id === r.fault_id ? "selected" : ""}>${esc(f.name)}</option>`).join("")}</select></div>
         <div class="full"><label class="sr" for="cf-fix">处理措施</label><input id="cf-fix" placeholder="处理措施，例如：更换电池包下壳体密封条，绝缘恢复到 2 MΩ"></div>
-        <div><label class="sr" for="cf-car">车辆</label><input id="cf-car" placeholder="车辆（可选）"></div>
+        <div><label class="sr" for="cf-car">车辆</label><input id="cf-car" placeholder="车辆（可选）" value="${esc($("#v-model")?.value.trim())}"></div>
         ${$("#q").value.trim() ? "" : `<div><label class="sr" for="cf-text">故障现象</label><input id="cf-text" placeholder="补一句故障现象（必填）"></div>`}
       </div>
       <button class="btn btn-main" id="cf-go">确认并存入案例库</button>
