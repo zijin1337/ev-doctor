@@ -139,6 +139,7 @@ class _Session:
         """按车辆平台调整本次诊断用的规则：改阈值、停用不适用的规则、调整个别故障的先验。
         只改这次会话的副本，不影响知识库。返回 (认出的选择, 说明, 故障先验倍数)。"""
         chosen, notes, mult, overrides, disabled = {}, [], {}, {}, set()
+        self.report_notes = {}  # 故障 id → 报告里要补充的说明（比如锂电低压电池的电压标准不同）
         for dim, value in (vehicle if isinstance(vehicle, dict) else {}).items():
             hit = self.vehicle_index.get((dim, value)) if isinstance(dim, str) and isinstance(value, str) else None
             if hit is None:
@@ -149,6 +150,8 @@ class _Session:
             disabled.update(o.get("disable", []))
             for fid, x in o.get("faults", {}).items():
                 mult[fid] = mult.get(fid, 1.0) * x
+            for fid, text in o.get("report_notes", {}).items():
+                self.report_notes.setdefault(fid, []).append(text)
             notes.append({"dim": d["name"], "label": o["label"], "note": o.get("note", "")})
         if overrides or disabled:
             self.rules = [dict(r, **overrides[r["id"]]) if r["id"] in overrides else r
@@ -409,6 +412,7 @@ class _Session:
                 "fault_id": top_id, "name": top["name"], "prob": round(top_p, 4), "confidence": conf,
                 "hv_risk": top["hv_risk"], "symptoms": top["symptoms"], "causes": top["causes"],
                 "steps": top["steps"], "safety": top["safety"], "refs": top["refs"],
+                "notes": self.report_notes.get(top_id, []),
             },
             "similar_cases": [] if need_more else self.similar_cases(text if text_used else "", top_id),
         }

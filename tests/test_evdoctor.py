@@ -276,6 +276,7 @@ class TestVehicle(TmpDB):
                 self.assertTrue(set(o.get("disable", [])) <= rules, o["label"])
                 self.assertTrue(set(o.get("faults", {})) <= faults, o["label"])
                 self.assertTrue(set(o.get("hide_params", [])) <= params, o["label"])
+                self.assertTrue(set(o.get("report_notes", {})) <= faults, o["label"])
 
     def test_profile_ranges_do_not_overlap(self):
         """改过阈值以后，同一参数的区间仍然互不重叠。"""
@@ -307,6 +308,9 @@ class TestVehicle(TmpDB):
         li = self.e.diagnose("早上车没反应，仪表不亮", m, vehicle={"lv_battery": "lithium"})
         self.assertGreater(self.prob(li, "LV_BATTERY_LOW"), self.prob(base, "LV_BATTERY_LOW"))
         self.assertTrue(any("锂电" in e["text"] for e in li["evidence"] if e["kind"] == "rule"))
+        self.assertEqual(li["report"]["fault_id"], "LV_BATTERY_LOW")
+        self.assertTrue(any("13.2" in n for n in li["report"]["notes"]))
+        self.assertEqual(base["report"]["notes"], [])
 
     def test_ehb_ignores_vacuum(self):
         m = {"vacuum_kpa": 30}

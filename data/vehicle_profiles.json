@@ -3,7 +3,10 @@
     "id": "battery",
     "name": "动力电池",
     "options": [
-      {"value": "", "label": "三元 / 不确定"},
+      {
+        "value": "",
+        "label": "三元 / 不确定"
+      },
       {
         "value": "lfp",
         "label": "磷酸铁锂",
@@ -15,12 +18,17 @@
             "source": "工程经验（磷酸铁锂低温性能弱于三元，以车型手册为准）"
           },
           "R_BAT_COOL": {
-            "value": [0, 10],
+            "value": [
+              0,
+              10
+            ],
             "message": "电池最低温度 {value} ℃，对磷酸铁锂电池偏低",
             "source": "工程经验（磷酸铁锂低温性能弱于三元，以车型手册为准）"
           }
         },
-        "faults": {"SOC_DRIFT": 1.8}
+        "faults": {
+          "SOC_DRIFT": 1.8
+        }
       }
     ]
   },
@@ -28,7 +36,10 @@
     "id": "lv_battery",
     "name": "低压电池",
     "options": [
-      {"value": "", "label": "铅酸 / 不确定"},
+      {
+        "value": "",
+        "label": "铅酸 / 不确定"
+      },
       {
         "value": "lithium",
         "label": "12V 锂电",
@@ -40,7 +51,10 @@
             "source": "工程经验（12V 磷酸铁锂电池静置平台约 13.2 V，以车型手册为准）"
           },
           "R_LV_OFF_WARN": {
-            "value": [12.8, 13.1],
+            "value": [
+              12.8,
+              13.1
+            ],
             "message": "静置 12V 电压 {value} V，锂电低压电池电量不足",
             "source": "工程经验（12V 磷酸铁锂电池静置平台约 13.2 V，以车型手册为准）"
           },
@@ -49,6 +63,9 @@
             "message": "静置 12V 电压 {value} V，锂电低压电池电量正常",
             "source": "工程经验（12V 磷酸铁锂电池静置平台约 13.2 V，以车型手册为准）"
           }
+        },
+        "report_notes": {
+          "LV_BATTERY_LOW": "这辆车是 12V 锂电：排查步骤里的静置电压按铅酸电池写的，锂电静置约 13.2 V 为正常，低于 12.8 V 已严重亏电，充电和检测设备要选锂电模式，以车型手册为准"
         }
       }
     ]
@@ -57,13 +74,25 @@
     "id": "brake",
     "name": "制动助力",
     "options": [
-      {"value": "", "label": "电子真空泵 / 不确定"},
+      {
+        "value": "",
+        "label": "电子真空泵 / 不确定"
+      },
       {
         "value": "ehb",
         "label": "电子液压助力（无真空泵）",
         "note": "电子液压助力的车没有真空泵，不用真空度判断制动助力",
-        "disable": ["R_VAC_LOW", "R_VAC_WARN", "R_VAC_OK"],
-        "hide_params": ["vacuum_kpa"]
+        "disable": [
+          "R_VAC_LOW",
+          "R_VAC_WARN",
+          "R_VAC_OK"
+        ],
+        "hide_params": [
+          "vacuum_kpa"
+        ],
+        "report_notes": {
+          "BRAKE_VACUUM": "这辆车是电子液压助力，没有真空泵：上面真空泵、真空管路相关的检查不适用，改为读取助力器（如 iBooster）的故障码、供电和信号，按车型手册排查"
+        }
       }
     ]
   }
