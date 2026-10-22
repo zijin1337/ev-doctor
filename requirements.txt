@@ -1,0 +1,2 @@
+# 电诊 EV-Doctor 只用 Python 标准库（http.server、sqlite3、urllib、json 等），没有任何第三方依赖。
+# 运行环境：Python >= 3.8。`pip install -r requirements.txt` 不会安装任何东西。

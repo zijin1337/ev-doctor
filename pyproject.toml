@@ -1,0 +1,14 @@
+[project]
+name = "ev-doctor"
+version = "0.3.0"
+description = "电诊 EV-Doctor：新能源汽车故障诊断 Agent（国标阈值规则 + 贝叶斯推理 + 信息增益追问 + SQLite，大模型可选）"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "zijin1337" }]
+keywords = ["新能源汽车", "故障诊断", "贝叶斯", "信息增益", "专家系统"]
+dependencies = []  # 纯标准库，零第三方依赖
+
+[project.urls]
+Homepage = "http://47.122.108.57"
+Repository = "https://github.com/zijin1337/ev-doctor"
