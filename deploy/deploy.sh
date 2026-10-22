@@ -178,8 +178,8 @@ cat <<EOF
 
   访问地址：$URL
   管理口令：$ADMIN_TOKEN
-      （在网页右上角"设置接口"里改大模型配置时，先在浏览器控制台执行
-        localStorage.evdocAdmin='$ADMIN_TOKEN'  ；或者直接 ssh 上来改 $APP_DIR/config.json）
+      （在网页右上角"设置接口"里改大模型配置时，按提示填这个管理口令即可，浏览器会记住；
+        或者直接 ssh 上来改 $APP_DIR/config.json）
 
   常用命令：
     systemctl status $SERVICE        看状态

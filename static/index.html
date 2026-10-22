@@ -332,6 +332,14 @@ dialog::backdrop{background:rgba(21,36,59,.45)}
     <h2>大模型接口（可选）</h2>
     <p>只用于"大白话解释"和"拍照识别"。不填也能正常诊断，诊断结论不受影响。key 只保存在本机的 config.json 里。</p>
     <div class="envnote" id="set-env" hidden>当前用环境变量配置，环境变量会覆盖这里的设置。</div>
+    <div id="set-admin" hidden>
+      <label for="set-admin-token">管理口令<small>服务器部署时打印的口令，填一次后本浏览器会记住</small></label>
+      <div class="row">
+        <input id="set-admin-token" type="password" placeholder="部署时打印的管理口令" autocomplete="off" spellcheck="false">
+        <button type="button" class="btn btn-main" id="set-admin-go">进入设置</button>
+      </div>
+    </div>
+    <div id="set-fields">
     <label for="set-base">接口地址<small>OpenAI 兼容格式，一般以 /v1 结尾</small></label>
     <input id="set-base" placeholder="https://api.deepseek.com/v1" autocomplete="off" spellcheck="false">
     <div class="presets">
@@ -353,6 +361,7 @@ dialog::backdrop{background:rgba(21,36,59,.45)}
     <label for="set-vmodel">看图模型<small>拍照识别用，可留空；留空就用上面的模型</small></label>
     <input id="set-vmodel" list="vmodel-list" placeholder="qwen-vl-max" autocomplete="off" spellcheck="false">
     <datalist id="model-list"></datalist><datalist id="vmodel-list"></datalist>
+    </div>
     <div class="test" id="set-test-out" hidden></div>
     <div class="foot">
       <span class="msg" id="set-msg" role="status"></span>
@@ -380,8 +389,14 @@ const DEMOS = {
 };
 
 const $ = s => document.querySelector(s);
-// 部署到服务器后，远程改"设置"需要管理口令：在浏览器控制台执行 localStorage.evdocAdmin='口令'
-const adminHeaders = path => { let t = null; try { t = path.startsWith("/api/settings") ? localStorage.getItem("evdocAdmin") : null; } catch {} return t ? {"X-Admin-Token": t} : {}; };
+// 部署到服务器后，远程改"设置"需要管理口令：打开设置窗口填一次，浏览器会记住（存在 localStorage.evdocAdmin）
+let adminMem = null;  // localStorage 被禁用时退回内存
+const adminHeaders = path => {
+  if (!path.startsWith("/api/settings")) return {};
+  let t = null; try { t = localStorage.getItem("evdocAdmin"); } catch {}
+  t = t || adminMem;
+  return t ? {"X-Admin-Token": t} : {};
+};
 const api = async (path, body) => {
   const h = {...adminHeaders(path), ...(body ? {"Content-Type": "application/json"} : {})};
   const r = await fetch(path, body ? {method: "POST", headers: h, body: JSON.stringify(body)} : {headers: h});
@@ -686,18 +701,42 @@ function shrink(file, max) {
 const dlg = $("#dlg");
 $("#stats").addEventListener("click", e => { if (e.target.id === "open-set") openSettings(); });
 async function openSettings() {
+  setMsg(""); $("#set-test-out").hidden = true; $("#set-models-state").textContent = "";
+  if (!dlg.open) dlg.showModal();
+  await loadSettings(false);
+}
+function lockSettings(err) {
+  $("#set-admin").hidden = false; $("#set-fields").hidden = true; $("#set-env").hidden = true;
+  ["set-test", "set-save", "set-clear"].forEach(id => $("#" + id).hidden = true);
+  setMsg(err || "这台服务器的接口设置需要管理口令", err ? "err" : "");
+  $("#set-admin-token").value = ""; $("#set-admin-token").focus();
+}
+async function loadSettings(fromUnlock) {
   let c;
   try { c = await api("/api/settings"); }
-  catch (e) { setHint(e.message.includes("只能在") ? "远程修改设置需要管理口令：在浏览器控制台执行 localStorage.evdocAdmin='部署时打印的口令' 后刷新" : e.message, true); return; }
+  catch (e) {
+    if (!e.message.includes("只能在")) { setMsg(e.message, "err"); return; }
+    if (fromUnlock) { try { localStorage.removeItem("evdocAdmin"); } catch {} adminMem = null; }
+    lockSettings(fromUnlock ? "口令不对，请重新输入" : ""); return;
+  }
+  $("#set-admin").hidden = true; $("#set-fields").hidden = false;
+  ["set-test", "set-save", "set-clear"].forEach(id => $("#" + id).hidden = false);
+  setMsg(fromUnlock ? "口令正确，可以修改接口了" : "", fromUnlock ? "ok" : "");
   $("#set-base").value = c.api_base; $("#set-model").value = c.model; $("#set-vmodel").value = c.vision_model;
   $("#set-key").value = ""; $("#set-key").type = "password"; $("#set-show").textContent = "显示";
   $("#set-key").placeholder = c.key_set ? "已保存，不改就留空" : "sk-...";
   $("#set-key-state").textContent = c.key_set ? `已保存 ${c.key_masked}` : "未填写";
   $("#set-env").hidden = !c.from_env;
-  setMsg(""); $("#set-test-out").hidden = true; $("#set-models-state").textContent = "";
-  dlg.showModal();
   ($("#set-base").value ? $("#set-key") : $("#set-base")).focus();
 }
+async function unlockSettings() {
+  const t = $("#set-admin-token").value.trim();
+  if (!t) { $("#set-admin-token").focus(); return; }
+  adminMem = t; try { localStorage.setItem("evdocAdmin", t); } catch {}
+  await loadSettings(true);
+}
+$("#set-admin-go").addEventListener("click", unlockSettings);
+$("#set-admin-token").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); unlockSettings(); } });
 const setMsg = (t, cls) => { const m = $("#set-msg"); m.textContent = t; m.className = "msg " + (cls || ""); };
 const formData = () => ({api_base: $("#set-base").value, api_key: $("#set-key").value, model: $("#set-model").value, vision_model: $("#set-vmodel").value});
 async function saveSettings() {
