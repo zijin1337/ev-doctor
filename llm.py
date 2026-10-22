@@ -19,6 +19,8 @@ import time
 import urllib.error
 import urllib.request
 
+from privacy import mask
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -291,7 +293,8 @@ EXPLAIN_SYSTEM = """你是新能源汽车维修门店里带徒弟的老师傅。
 
 def build_explain_prompt(result):
     r = result["report"]
-    lines = ["【技师描述】" + (result.get("text") or "（没有文字描述，只录了数据流）"), "", "【系统候选】"]
+    # 描述要发给外部大模型接口，先脱敏
+    lines = ["【技师描述】" + (mask(result.get("text")) or "（没有文字描述，只录了数据流）"), "", "【系统候选】"]
     for c in result["candidates"][:3]:
         lines.append(f"- {c['name']}：{c['prob'] * 100:.1f}%")
     lines += ["", "【判断依据】"]

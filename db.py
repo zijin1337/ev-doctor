@@ -20,6 +20,8 @@ import sys
 import threading
 from datetime import datetime, timedelta
 
+from privacy import mask
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data")
 DB_PATH = os.path.join(DATA, "evdoctor.db")
@@ -264,15 +266,16 @@ def counts(conn):
 # ---------------- 写 ----------------
 
 def save_diagnosis(conn, text, measurements, answers, top_fault, top_prob):
+    """存一条诊断记录。描述先脱敏（手机号、车牌、VIN 等），原文不落盘。"""
     with _lock, conn:
         cur = conn.execute(
             "INSERT INTO diagnoses (created_at, text, measurements, answers, top_fault, top_prob) VALUES (?,?,?,?,?,?)",
-            (now(), text, json.dumps(measurements, ensure_ascii=False), json.dumps(answers), top_fault, top_prob))
+            (now(), mask(text), json.dumps(measurements, ensure_ascii=False), json.dumps(answers), top_fault, top_prob))
         return cur.lastrowid
 
 
 def confirm(conn, diagnosis_id, fault_id, resolution="", vehicle="", text=None):
-    """技师确认最终故障：写回维修案例库，并标记诊断记录。返回新案例 id。"""
+    """技师确认最终故障：写回维修案例库，并标记诊断记录。返回新案例 id。描述、车辆、处理措施都先脱敏。"""
     with _lock, conn:
         if not conn.execute("SELECT 1 FROM faults WHERE id = ?", (fault_id,)).fetchone():
             raise ValueError("未知的故障类别")
@@ -287,7 +290,7 @@ def confirm(conn, diagnosis_id, fault_id, resolution="", vehicle="", text=None):
         conn.execute("UPDATE diagnoses SET confirmed_fault = ? WHERE id = ?", (fault_id, diagnosis_id))
         cur = conn.execute(
             "INSERT INTO cases (fault_id, vehicle, text, resolution, source, diagnosis_id, created_at) VALUES (?,?,?,?,?,?,?)",
-            (fault_id, vehicle.strip(), desc, resolution.strip(), "confirmed", diagnosis_id, now()))
+            (fault_id, mask(vehicle.strip()), mask(desc), mask(resolution.strip()), "confirmed", diagnosis_id, now()))
         return cur.lastrowid
 
 

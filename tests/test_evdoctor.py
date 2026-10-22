@@ -19,6 +19,7 @@ import db          # noqa: E402
 import diagnoser   # noqa: E402
 import engine      # noqa: E402
 import llm         # noqa: E402
+import privacy     # noqa: E402
 
 
 class TmpDB(unittest.TestCase):
@@ -253,6 +254,38 @@ class TestEngine(TmpDB):
         ts = [threading.Thread(target=w) for _ in range(8)] + [threading.Thread(target=c)]
         [t.start() for t in ts]; [t.join() for t in ts]
         self.assertEqual(errs, [])
+
+
+# ---------------------------------------------------------------- 数据脱敏
+class TestPrivacy(TmpDB):
+    def test_mask_patterns(self):
+        m = privacy.mask
+        self.assertEqual(m("车主电话13812345678，回电"), "车主电话138****5678，回电")
+        self.assertEqual(m("粤B12345 上不了高压"), "粤B***45 上不了高压")
+        self.assertEqual(m("新能源牌照粤BD12345"), "新能源牌照粤B****45")
+        self.assertEqual(m("VIN LSVAU2180N2183294 已核对"), "VIN LSV**********3294 已核对")
+        self.assertEqual(m("身份证110101199003071234"), "身份证110101********1234")
+
+    def test_diagnostic_text_untouched(self):
+        for s in ("扫码出来P0A0A，换完PTC之后出现的", "U0111 BMS 通讯丢失", "绝缘电阻 25 kΩ，电池 380 V",
+                  "CAN 电阻 60 Ω，CC1 4 V", "", None):
+            self.assertEqual(privacy.mask(s), s)
+
+    def test_db_stores_masked(self):
+        did = db.save_diagnosis(self.conn, "粤B12345 车主13812345678 上不了高压", {}, {}, "INSULATION_LOW", 0.5)
+        row = self.conn.execute("SELECT text FROM diagnoses WHERE id = ?", (did,)).fetchone()
+        self.assertEqual(row["text"], "粤B***45 车主138****5678 上不了高压")
+        cid = db.confirm(self.conn, did, "INSULATION_LOW", "联系车主 13900001111 取车", "粤BD12345 LSVAU2180N2183294")
+        case = self.conn.execute("SELECT text, vehicle, resolution FROM cases WHERE id = ?", (cid,)).fetchone()
+        self.assertNotIn("13812345678", case["text"])
+        self.assertEqual(case["vehicle"], "粤B****45 LSV**********3294")
+        self.assertEqual(case["resolution"], "联系车主 139****1111 取车")
+
+    def test_explain_prompt_masked(self):
+        res = {"text": "粤B12345 上不了高压", "candidates": [], "evidence": [], "answered": [],
+               "report": {"name": "x", "causes": [], "steps": [], "safety": "", "refs": []}}
+        self.assertIn("粤B***45", llm.build_explain_prompt(res))
+        self.assertNotIn("粤B12345", llm.build_explain_prompt(res))
 
 
 # ---------------------------------------------------------------- 大模型层（用本地假接口）
