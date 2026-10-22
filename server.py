@@ -16,11 +16,12 @@
     GET  /healthz               健康检查（给 nginx / 监控用）
     GET  /api/info              数据库统计 + 大模型状态
     GET  /api/params            可录入的数据流参数
+    GET  /api/vehicle           车辆平台选项（动力电池 / 低压电池 / 制动助力）
     GET  /api/faults            故障库列表（含案例数）
     GET  /api/faults/<id>       单个故障详情 + 维修案例
     GET  /api/cases?q=&fault_id=&limit=
     GET  /api/history?limit=
-    POST /api/diagnose          {"text","measurements":{},"answers":{}}
+    POST /api/diagnose          {"text","measurements":{},"answers":{},"vehicle":{"battery":"lfp",...}}
     POST /api/confirm           {"diagnosis_id","fault_id","resolution","vehicle"}
   需要配置大模型（可选）：
     POST /api/explain           {"diagnosis_id"} → 流式文本
@@ -181,6 +182,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(llm.public_config())
             if path == "/api/params":
                 return self._json(db.get_params(CONN))
+            if path == "/api/vehicle":
+                keep = ("value", "label", "note", "hide_params")
+                return self._json([{"id": d["id"], "name": d["name"],
+                                    "options": [{k: o[k] for k in keep if k in o} for o in d["options"]]}
+                                   for d in ENGINE.vehicle])
             if path == "/api/faults":
                 keep = ("id", "name", "system", "severity", "hv_risk", "dtc", "keywords", "symptoms", "case_count")
                 return self._json([{k: f[k] for k in keep} for f in db.get_faults(CONN)])
@@ -234,7 +240,8 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/api/diagnose":
                 text = str(data.get("text") or "")[:MAX_TEXT]
-                res = ENGINE.diagnose(text, data.get("measurements") or {}, data.get("answers") or {})
+                vehicle = data.get("vehicle") if isinstance(data.get("vehicle"), dict) else {}
+                res = ENGINE.diagnose(text, data.get("measurements") or {}, data.get("answers") or {}, vehicle)
                 remember(res)
                 return self._json(res)
 

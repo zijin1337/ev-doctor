@@ -7,10 +7,13 @@
   2. 数据流  → rules 表里的国标 / 工程阈值，每条命中的规则给相关故障乘一个似然比
   3. 追问    → questions 表里的条件概率；下一个问题挑"期望信息增益"最大的
   4. 相似案例 → 在 cases 表里按字符 n-gram 余弦找最像的历史维修记录
+  5. 车辆平台 → data/vehicle_profiles.json：按动力电池、低压电池、制动方式改阈值、停用不适用的规则
 
 为了让"越用越准"真的生效，技师确认后的案例会并进 TF-IDF 的语料（rebuild()）。
 """
+import json
 import math
+import os
 import threading
 import time
 
@@ -33,6 +36,15 @@ QUESTION_COVERED_BY = {
     "Q_LV_VOLT_READY": ["lv_voltage_ready"],
     "Q_COOLANT": ["coolant_level"],
 }
+
+VEHICLE_PATH = os.path.join(db.DATA, "vehicle_profiles.json")
+
+
+def load_vehicle_profiles(path=VEHICLE_PATH):
+    """车辆平台档案：每个维度（动力电池 / 低压电池 / 制动助力）的选项，以及选中后怎么调整规则。"""
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
 
 DERIVED = {
     "insul_ohm_per_v": ("绝缘电阻（换算）", "Ω/V"),
@@ -60,6 +72,8 @@ class _Knowledge:
         self.questions = db.get_questions(conn)
         self.q_by_id = {q["id"]: q for q in self.questions}
         self.cases = db.get_cases(conn, limit=100000)
+        self.vehicle = load_vehicle_profiles()
+        self.vehicle_index = {(d["id"], o["value"]): (d, o) for d in self.vehicle for o in d["options"] if o["value"]}
 
         # 案例描述加进对应故障的 examples，确认得越多，这类说法就认得越准
         aug = []
@@ -97,10 +111,11 @@ class Engine:
     cases = property(lambda s: s._k.cases)
     ranker = property(lambda s: s._k.ranker)
     case_vecs = property(lambda s: s._k.case_vecs)
+    vehicle = property(lambda s: s._k.vehicle)
 
-    def diagnose(self, text="", measurements=None, answers=None):
+    def diagnose(self, text="", measurements=None, answers=None, vehicle=None):
         # 固定本次请求用的知识库快照；期间别的线程 rebuild 也不影响这里
-        return _Session(self, self._k).diagnose(text, measurements, answers)
+        return _Session(self, self._k).diagnose(text, measurements, answers, vehicle)
 
     def confirm(self, diagnosis_id, fault_id, resolution="", vehicle="", text=None):
         case_id = db.confirm(self.conn, diagnosis_id, fault_id, resolution, vehicle, text)
@@ -117,6 +132,28 @@ class _Session:
         self.params, self.rules = k.params, k.rules
         self.questions, self.q_by_id = k.questions, k.q_by_id
         self.cases, self.ranker, self.case_vecs = k.cases, k.ranker, k.case_vecs
+        self.vehicle_index = k.vehicle_index
+
+    # ------------------------------------------------------------------ 车辆平台
+    def _apply_vehicle(self, vehicle):
+        """按车辆平台调整本次诊断用的规则：改阈值、停用不适用的规则、调整个别故障的先验。
+        只改这次会话的副本，不影响知识库。返回 (认出的选择, 说明, 故障先验倍数)。"""
+        chosen, notes, mult, overrides, disabled = {}, [], {}, {}, set()
+        for dim, value in (vehicle if isinstance(vehicle, dict) else {}).items():
+            hit = self.vehicle_index.get((dim, value)) if isinstance(dim, str) and isinstance(value, str) else None
+            if hit is None:
+                continue  # 不认识的维度或取值直接忽略，按通用阈值算
+            d, o = hit
+            chosen[dim] = value
+            overrides.update(o.get("rules", {}))
+            disabled.update(o.get("disable", []))
+            for fid, x in o.get("faults", {}).items():
+                mult[fid] = mult.get(fid, 1.0) * x
+            notes.append({"dim": d["name"], "label": o["label"], "note": o.get("note", "")})
+        if overrides or disabled:
+            self.rules = [dict(r, **overrides[r["id"]]) if r["id"] in overrides else r
+                          for r in self.rules if r["id"] not in disabled]
+        return chosen, notes, mult
 
     # ------------------------------------------------------------------ 数据流
     def _text_has_signal(self, text, items):
@@ -185,8 +222,11 @@ class _Session:
         return hits
 
     # ------------------------------------------------------------------ 概率
-    def _posterior(self, prior, rule_hits, answers):
+    def _posterior(self, prior, rule_hits, answers, mult=None):
         logp = {fid: math.log(max(prior.get(fid, 0), 1e-9)) for fid in self.ids}
+        for fid, x in (mult or {}).items():  # 车辆平台带来的先验调整
+            if fid in logp:
+                logp[fid] += math.log(x)
         for r, _ in rule_hits:
             for fid, lr in r["lr"].items():
                 if fid in logp:
@@ -272,10 +312,11 @@ class _Session:
         return [dict(c, sim=round(min(s, 1.0), 3)) for s, c in scored[:k] if s > 0.05]
 
     # ------------------------------------------------------------------ 主入口
-    def diagnose(self, text="", measurements=None, answers=None):
+    def diagnose(self, text="", measurements=None, answers=None, vehicle=None):
         t0 = time.perf_counter()
         text = (text or "").strip()
         answers = {k: v for k, v in (answers or {}).items() if k in self.q_by_id}
+        chosen, vnotes, vmult = self._apply_vehicle(vehicle)
         m = self._measurements(measurements)
         if not text and not m and not answers:
             raise ValueError("请写一句故障描述，或者至少录入一项数据流")
@@ -308,6 +349,13 @@ class _Session:
                 evidence.append({"kind": "text", "level": "info", "effect": "support",
                                  "text": "描述里没有识别到故障信息，先按下面的问题逐个确认", "source": None})
 
+        # 车辆平台：告诉技师这次按什么平台调整了判断
+        for n in vnotes:
+            if n["note"]:
+                evidence.append({"kind": "vehicle", "level": "info", "effect": "support",
+                                 "text": f"按车辆平台「{n['dim']}：{n['label']}」调整：{n['note']}",
+                                 "source": "工程经验（以车型手册为准）"})
+
         # 2) 数据流规则
         hits = self._apply_rules(m)
         order = {"fault": 0, "warn": 1, "ok": 2}
@@ -323,7 +371,7 @@ class _Session:
             label = next((a["label"] for a in q["answers"] if a["key"] == key), "不确定")
             answered.append({"id": qid, "text": q["text"], "answer": key, "answer_label": label})
 
-        post = self._posterior(prior, hits, answers)
+        post = self._posterior(prior, hits, answers, vmult)
         ranked = sorted(post.items(), key=lambda kv: -kv[1])
         top_id, top_p = ranked[0]
         top = self.by_id[top_id]
@@ -344,6 +392,8 @@ class _Session:
             "diagnosis_id": diag_id,
             "text": text,
             "text_used": text_used,
+            "vehicle": chosen,
+            "vehicle_notes": vnotes,
             "status": "need_more" if need_more else "ok",
             "candidates": [
                 {"id": fid, "name": self.by_id[fid]["name"], "system": self.by_id[fid]["system"],

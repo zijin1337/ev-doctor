@@ -257,6 +257,74 @@ class TestEngine(TmpDB):
 
 
 # ---------------------------------------------------------------- 数据脱敏
+class TestVehicle(TmpDB):
+    """车辆平台档案：按动力电池、低压电池、制动方式调整规则。"""
+
+    def setUp(self):
+        super().setUp()
+        self.e = engine.Engine(self.conn)
+
+    def prob(self, res, fid):
+        return next((c["prob"] for c in res["candidates"] if c["id"] == fid), 0.0)
+
+    def test_profiles_reference_known_items(self):
+        rules, faults, params = {r["id"] for r in self.e.rules}, set(self.e.ids), set(self.e.params)
+        for d in self.e.vehicle:
+            self.assertEqual(d["options"][0]["value"], "", f"{d['id']} 第一项应是通用默认")
+            for o in d["options"]:
+                self.assertTrue(set(o.get("rules", {})) <= rules, o["label"])
+                self.assertTrue(set(o.get("disable", [])) <= rules, o["label"])
+                self.assertTrue(set(o.get("faults", {})) <= faults, o["label"])
+                self.assertTrue(set(o.get("hide_params", [])) <= params, o["label"])
+
+    def test_profile_ranges_do_not_overlap(self):
+        """改过阈值以后，同一参数的区间仍然互不重叠。"""
+        for d in self.e.vehicle:
+            for o in d["options"]:
+                s = engine._Session(self.e, self.e._k)
+                s._apply_vehicle({d["id"]: o["value"]})
+                by_param = {}
+                for r in s.rules:
+                    if r["op"] != "==":
+                        by_param.setdefault(r["param"], []).append(r)
+                for p, rs in by_param.items():
+                    for x in (-1e9, -20, -10, -5, 0, 1, 5, 9.9, 10, 11.9, 12.3, 12.8, 13.0, 13.1, 13.2, 14, 15, 40, 50, 60, 100, 1e9):
+                        hits = [r["id"] for r in rs if engine._Session._match(r, x)]
+                        self.assertLessEqual(len(hits), 1, f"{o['label']} {p}={x}: {hits}")
+
+    def test_lfp_tightens_low_temperature(self):
+        m = {"cell_min_t": -5}
+        base = self.e.diagnose("冬天续航掉得厉害", m)
+        lfp = self.e.diagnose("冬天续航掉得厉害", m, vehicle={"battery": "lfp"})
+        self.assertGreater(self.prob(lfp, "BATTERY_LOW_TEMP"), self.prob(base, "BATTERY_LOW_TEMP"))
+        self.assertEqual(lfp["vehicle"], {"battery": "lfp"})
+        self.assertTrue(any(e["kind"] == "vehicle" for e in lfp["evidence"]))
+
+    def test_lithium_low_voltage_battery(self):
+        """12.6 V 对铅酸是正常，对 12V 锂电已经是严重亏电。"""
+        m = {"lv_voltage_off": 12.6}
+        base = self.e.diagnose("早上车没反应，仪表不亮", m)
+        li = self.e.diagnose("早上车没反应，仪表不亮", m, vehicle={"lv_battery": "lithium"})
+        self.assertGreater(self.prob(li, "LV_BATTERY_LOW"), self.prob(base, "LV_BATTERY_LOW"))
+        self.assertTrue(any("锂电" in e["text"] for e in li["evidence"] if e["kind"] == "rule"))
+
+    def test_ehb_ignores_vacuum(self):
+        m = {"vacuum_kpa": 30}
+        base = self.e.diagnose("刹车踩着很硬", m)
+        ehb = self.e.diagnose("刹车踩着很硬", m, vehicle={"brake": "ehb"})
+        self.assertTrue(any(e["kind"] == "rule" for e in base["evidence"]))
+        self.assertFalse(any(e["kind"] == "rule" for e in ehb["evidence"]))
+        self.assertLess(self.prob(ehb, "BRAKE_VACUUM"), self.prob(base, "BRAKE_VACUUM"))
+
+    def test_unknown_vehicle_values_ignored(self):
+        m = {"insulation_kohm": 25, "pack_voltage": 380}
+        base = self.e.diagnose("上不了高压", m)
+        for odd in ({"battery": "钠电", "foo": "bar", "brake": ["x"]}, "lfp", None):
+            r = self.e.diagnose("上不了高压", m, vehicle=odd)
+            self.assertEqual(r["vehicle"], {})
+            self.assertEqual([c["prob"] for c in r["candidates"]], [c["prob"] for c in base["candidates"]])
+
+
 class TestPrivacy(TmpDB):
     def test_mask_patterns(self):
         m = privacy.mask
