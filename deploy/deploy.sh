@@ -11,10 +11,12 @@
 #   ADMIN_TOKEN=xxxx          远程改"设置"用的口令；不填会随机生成并打印出来
 #   NO_NGINX=1                不装 nginx，直接用 0.0.0.0:PORT 对外（临时演示可以，不推荐）
 #
-# 再次运行 = 更新：会 git pull、重启服务，数据库和 config.json 不会被动。
+# 再次运行 = 更新：会 git pull、重启服务，数据库、config.json、端口和管理口令都沿用上次的。
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# 再次运行时沿用上次部署的端口（比如 8000 被别的服务占了、当初指定过 PORT=8010），避免更新时被改回 8000
+PORT="${PORT:-$(sed -n 's/^EVDOC_PORT=//p' /etc/default/ev-doctor 2>/dev/null || true)}"
 PORT="${PORT:-8000}"
 DOMAIN="${DOMAIN:-}"
 SERVICE=ev-doctor
