@@ -36,11 +36,27 @@ python server.py
 
 页面上有“试试这些真实场景”和“填入示例”按钮，点一下就能看到完整流程。
 
+### 桌面版
+
+原生桌面程序（Qt），直接调用本地诊断引擎，不用起网页服务，断网可用，和网页版共用同一个数据库。比网页版多一个**车辆平台选择**（动力电池、低压电池、制动助力，见下文“不同车型怎么办”）。
+
+Windows 双击 `start_gui.bat`（第一次运行会自动安装界面库 PySide6，约 70 MB），或者：
+
+```
+pip install PySide6-Essentials
+python gui.py
+```
+
+诊断核心和网页版仍然零依赖，只有桌面版需要 PySide6。
+
+![桌面版：车辆平台选择、概率排序、高压警示和逐条依据](docs/desktop.png)
+
 ## 技术架构
 
 ```mermaid
 flowchart LR
-  UI["前端 static/index.html<br/>诊断 · 故障库 · 维修案例 · 设置"] -->|HTTP / JSON| S["server.py<br/>限流 · 鉴权 · 输入校验<br/>健康检查 · 日志"]
+  UI["网页版 static/index.html<br/>诊断 · 故障库 · 维修案例 · 设置"] -->|HTTP / JSON| S["server.py<br/>限流 · 鉴权 · 输入校验<br/>健康检查 · 日志"]
+  G["桌面版 gui.py（Qt）<br/>含车辆平台选择"] -->|直接调用，无需联网| E
   S --> E["engine.py 诊断引擎<br/>贝叶斯融合 · 信息增益追问<br/>建议测量 · 相似案例"]
   E --> T["diagnoser.py<br/>字符 n-gram TF-IDF<br/>（接口可换成训练的小模型）"]
   E --> D[("db.py · SQLite WAL<br/>7 张表 · 入库脱敏 · 每日备份")]
@@ -57,7 +73,8 @@ flowchart LR
 | `llm.py` | 可选的大模型调用：大白话解释（流式）、拍照识别（结果按参数白名单过滤） |
 | `eval.py` | 准确率评测：开发集 + 留出集，`python eval.py -v` 看错例 |
 | `data/*.json` | 知识库：19 类故障、55 条规则、21 项参数、24 个追问、38 条种子案例、参考标准、57 条评测样本、车辆平台档案 |
-| `static/index.html` | 前端：诊断 / 故障库 / 维修案例 / 设置 |
+| `static/index.html` | 网页版前端：诊断 / 故障库 / 维修案例 / 设置 |
+| `gui.py` / `start_gui.bat` | 桌面版（Qt / PySide6）：诊断（含车辆平台选择）/ 故障库 / 维修案例，双击启动 |
 | `tests/` | 40 个单元测试 |
 | `deploy/` | 一键部署脚本（systemd + nginx + HTTPS）、Dockerfile |
 | `requirements.txt` / `pyproject.toml` | 依赖声明（无第三方依赖）与项目元数据 |
@@ -94,7 +111,7 @@ P(故障 | 证据) ∝ P(故障 | 文字描述)^0.6 × Π 数据流规则似然�
 
 例：“早上车没反应，仪表不亮”，静置 12V 电压 12.6 V。按铅酸算电量正常，12V 低压蓄电池亏电只有 32%；选“12V 锂电”后同样的读数已是严重亏电，升到 96%。诊断依据里会写明按哪个平台调整了哪条阈值。
 
-调用方式：`POST /api/diagnose` 带上 `"vehicle": {"battery": "lfp", "lv_battery": "lithium", "brake": "ehb"}`，`GET /api/vehicle` 返回可选项。不认识的取值会被忽略，按通用阈值计算。
+桌面版在左侧直接选择；接口调用时 `POST /api/diagnose` 带上 `"vehicle": {"battery": "lfp", "lv_battery": "lithium", "brake": "ehb"}`，`GET /api/vehicle` 返回可选项。不认识的取值会被忽略，按通用阈值计算。选了“12V 锂电”或“电子液压助力”时，诊断报告还会补充说明哪些排查步骤要按该平台调整。
 
 车型和档案不完全匹配时：没录入的参数不参与判断；每条规则只是乘一个似然比，不会一票否决；不认识的故障码会提示“可能是厂家私有码，请查对应车型手册”。下一步用门店确认的案例按车型校准阈值和权重。
 
